@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      font-size: 12px;
+      color: #0C0E16;
+      padding: 40px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+    .invoice-id {
+      font-size: 16px;
+      font-weight: bold;
+      color: #0C0E16;
+    }
+    .invoice-id span { color: #7E88C3; }
+    .description { color: #7E88C3; margin-top: 4px; }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: bold;
+      text-transform: uppercase;
+      margin-top: 8px;
+    }
+    .status-paid { background: #33D69F22; color: #33D69F; }
+    .status-pending { background: #FF8F0022; color: #FF8F00; }
+    .status-draft { background: #DFE3FA; color: #373B53; }
+    .status-overdue { background: #EC574422; color: #EC5744; }
+    .sender-address { text-align: right; color: #7E88C3; line-height: 1.6; }
+    .details {
+      display: flex;
+      gap: 60px;
+      margin-bottom: 30px;
+    }
+    .detail-group h4 { color: #7E88C3; font-weight: normal; margin-bottom: 8px; }
+    .detail-group p { font-size: 14px; font-weight: bold; }
+    .detail-group .address { font-weight: normal; color: #7E88C3; line-height: 1.6; margin-top: 4px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #F9FAFE;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 0;
+    }
+    thead th {
+      text-align: left;
+      color: #7E88C3;
+      font-weight: normal;
+      padding: 16px 24px;
+    }
+    thead th:last-child { text-align: right; }
+    thead th:nth-child(2), thead th:nth-child(3) { text-align: center; }
+    tbody td {
+      padding: 16px 24px;
+      font-weight: bold;
+    }
+    tbody td:last-child { text-align: right; }
+    tbody td:nth-child(2), tbody td:nth-child(3) { text-align: center; color: #7E88C3; }
+    .summary {
+      background: #F9FAFE;
+      padding: 0 24px 16px 24px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      color: #7E88C3;
+      font-size: 12px;
+    }
+    .summary-row .value { color: #0C0E16; font-weight: bold; }
+    .total-row {
+      background: #373B53;
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px;
+      border-radius: 0 0 8px 8px;
+    }
+    .total-row .label { font-size: 12px; }
+    .total-row .amount { font-size: 24px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="invoice-id"><span>#</span>{{ invoice.id }}</div>
+      <div class="description">{{ invoice.description }}</div>
+      {% if invoice.is_overdue %}
+        <div class="status-badge status-overdue">OVERDUE</div>
+      {% elif invoice.status == "paid" %}
+        <div class="status-badge status-paid">Paid</div>
+      {% elif invoice.status == "pending" %}
+        <div class="status-badge status-pending">Pending</div>
+      {% else %}
+        <div class="status-badge status-draft">Draft</div>
+      {% endif %}
+    </div>
+    <div class="sender-address">
+      {{ invoice.sender_address.street }}<br>
+      {{ invoice.sender_address.city }}<br>
+      {{ invoice.sender_address.post_code }}<br>
+      {{ invoice.sender_address.country }}
+    </div>
+  </div>
+
+  <div class="details">
+    <div class="detail-group">
+      <h4>Invoice Date</h4>
+      <p>{{ invoice.created_at }}</p>
+      <h4 style="margin-top: 20px;">Payment Due</h4>
+      <p>{{ invoice.payment_due }}</p>
+    </div>
+    <div class="detail-group">
+      <h4>Bill To</h4>
+      <p>{{ invoice.client_name }}</p>
+      <div class="address">
+        {{ invoice.client_address.street }}<br>
+        {{ invoice.client_address.city }}<br>
+        {{ invoice.client_address.post_code }}<br>
+        {{ invoice.client_address.country }}
+      </div>
+    </div>
+    <div class="detail-group">
+      <h4>Sent To</h4>
+      <p>{{ invoice.client_email }}</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item Name</th>
+        <th>QTY.</th>
+        <th>Price</th>
+        <th>Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in invoice.items %}
+      <tr>
+        <td>{{ item.name }}</td>
+        <td>{{ item.quantity }}</td>
+        <td>{{ "%.2f"|format(item.price) }}</td>
+        <td>{{ "%.2f"|format(item.total) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="summary">
+    <div class="summary-row">
+      <span>Subtotal</span>
+      <span class="value">{{ "%.2f"|format(invoice.subtotal) }}</span>
+    </div>
+    {% if invoice.tax_rate > 0 %}
+    <div class="summary-row">
+      <span>Tax ({{ invoice.tax_rate }}%)</span>
+      <span class="value">{{ "%.2f"|format(invoice.tax_amount) }}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="total-row">
+    <span class="label">Amount Due</span>
+    <span class="amount">{{ "%.2f"|format(invoice.total) }}</span>
+  </div>
+</body>
+</html>
