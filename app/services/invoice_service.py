@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import extract, func, select
+from sqlalchemy import extract, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -47,18 +47,9 @@ def derive_totals(
 
 
 async def _next_sequential_id(db: AsyncSession) -> str:
-    """Generate sequential invoice IDs like INV-0001, INV-0002, etc."""
-    result = await db.execute(
-        select(Invoice.id)
-        .where(Invoice.id.like("INV-%"))
-        .order_by(Invoice.id.desc())
-        .limit(1)
-    )
-    last_id = result.scalar_one_or_none()
-    if last_id is None:
-        return "INV-0001"
-    # Extract the number part and increment
-    num = int(last_id.split("-")[1]) + 1
+    """Generate sequential invoice IDs like INV-0001 using a PostgreSQL sequence."""
+    result = await db.execute(text("SELECT nextval('invoice_number_seq')"))
+    num = result.scalar_one()
     return f"INV-{num:04d}"
 
 
@@ -122,19 +113,33 @@ async def create_invoice(
 
 
 async def list_invoices(
-    db: AsyncSession, owner_id: UUID, status_filter: Optional[str] = None
-) -> list[Invoice]:
-    query = (
-        select(Invoice)
-        .where(Invoice.owner_id == owner_id)
-        .options(selectinload(Invoice.items))
-        .order_by(Invoice.id.desc())
-    )
+    db: AsyncSession,
+    owner_id: UUID,
+    status_filter: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> tuple[list[Invoice], int]:
+    """Returns (invoices, total_count)."""
+    base_filter = [Invoice.owner_id == owner_id]
     if status_filter:
         statuses = [s.strip() for s in status_filter.split(",")]
-        query = query.where(Invoice.status.in_(statuses))
+        base_filter.append(Invoice.status.in_(statuses))
+
+    count_result = await db.execute(
+        select(func.count()).where(*base_filter)
+    )
+    total = count_result.scalar_one()
+
+    query = (
+        select(Invoice)
+        .where(*base_filter)
+        .options(selectinload(Invoice.items))
+        .order_by(Invoice.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     result = await db.execute(query)
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total
 
 
 async def get_by_id(db: AsyncSession, invoice_id: str, owner_id: UUID) -> Invoice:
@@ -191,7 +196,7 @@ async def update_invoice(
         invoice.items.clear()
 
         item_rows, subtotal, tax_amount, total = derive_totals(
-            data.items, Decimal(str(invoice.tax_rate))
+            data.items, invoice.tax_rate
         )
         invoice.subtotal = subtotal
         invoice.tax_amount = tax_amount
@@ -208,7 +213,7 @@ async def update_invoice(
     elif data.tax_rate is not None:
         # Tax rate changed but items didn't — recalculate from existing subtotal
         invoice.tax_amount = (
-            invoice.subtotal * Decimal(str(invoice.tax_rate)) / Decimal("100")
+            invoice.subtotal * invoice.tax_rate / Decimal("100")
         ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         invoice.total = invoice.subtotal + invoice.tax_amount
 
@@ -318,11 +323,11 @@ async def get_statistics(db: AsyncSession, owner_id: UUID) -> InvoiceStatistics:
     )
     paid_this_month = result.scalar_one()
 
-    # Overdue count
+    # Overdue count (only pending invoices, not drafts)
     result = await db.execute(
         select(func.count()).where(
             Invoice.owner_id == owner_id,
-            Invoice.status != "paid",
+            Invoice.status == "pending",
             Invoice.payment_due < today,
         )
     )

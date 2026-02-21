@@ -1,6 +1,7 @@
+import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,8 +12,11 @@ from app.schemas.invoice import (
     InvoiceResponse,
     InvoiceStatistics,
     InvoiceUpdateRequest,
+    PaginatedResponse,
 )
 from app.services import email_service, invoice_service, pdf_service
+
+VALID_STATUSES = {"draft", "pending", "paid"}
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -25,14 +29,32 @@ async def get_statistics(
     return await invoice_service.get_statistics(db, current_user.id)
 
 
-@router.get("", response_model=list[InvoiceResponse])
+@router.get("", response_model=PaginatedResponse[InvoiceResponse])
 async def list_invoices(
     status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    invoices = await invoice_service.list_invoices(db, current_user.id, status_filter)
-    return [InvoiceResponse.from_orm_model(inv) for inv in invoices]
+    if status_filter is not None:
+        requested = {s.strip() for s in status_filter.split(",")}
+        invalid = requested - VALID_STATUSES
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status filter: {', '.join(sorted(invalid))}. "
+                f"Allowed values: {', '.join(sorted(VALID_STATUSES))}",
+            )
+    invoices, total = await invoice_service.list_invoices(
+        db, current_user.id, status_filter, limit, offset
+    )
+    return PaginatedResponse(
+        items=[InvoiceResponse.from_orm_model(inv) for inv in invoices],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("", response_model=InvoiceResponse, status_code=status.HTTP_201_CREATED)
@@ -103,7 +125,7 @@ async def send_invoice_email(
 ):
     invoice = await invoice_service.get_by_id(db, id, current_user.id)
     invoice_response = InvoiceResponse.from_orm_model(invoice)
-    return email_service.send_invoice_email(invoice_response)
+    return await asyncio.to_thread(email_service.send_invoice_email, invoice_response)
 
 
 @router.get("/{id}/pdf")
@@ -114,7 +136,7 @@ async def download_pdf(
 ):
     invoice = await invoice_service.get_by_id(db, id, current_user.id)
     invoice_response = InvoiceResponse.from_orm_model(invoice)
-    pdf_bytes = pdf_service.generate_invoice_pdf(invoice_response)
+    pdf_bytes = await asyncio.to_thread(pdf_service.generate_invoice_pdf, invoice_response)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

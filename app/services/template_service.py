@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -33,14 +33,24 @@ async def create_template(
     return template
 
 
-async def list_templates(db: AsyncSession, owner_id: UUID) -> list[InvoiceTemplate]:
+async def list_templates(
+    db: AsyncSession, owner_id: UUID, limit: int = 20, offset: int = 0
+) -> tuple[list[InvoiceTemplate], int]:
+    """Returns (templates, total_count)."""
+    count_result = await db.execute(
+        select(func.count()).where(InvoiceTemplate.owner_id == owner_id)
+    )
+    total = count_result.scalar_one()
+
     result = await db.execute(
         select(InvoiceTemplate)
         .where(InvoiceTemplate.owner_id == owner_id)
         .options(selectinload(InvoiceTemplate.items))
         .order_by(InvoiceTemplate.created_at.desc())
+        .limit(limit)
+        .offset(offset)
     )
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total
 
 
 async def get_template(db: AsyncSession, template_id: UUID, owner_id: UUID) -> InvoiceTemplate:

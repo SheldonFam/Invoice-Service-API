@@ -11,3 +11,7 @@ weasyprint
 jinja2
 python-multipart
 resend
+slowapi
+pytest
+pytest-asyncio
+httpx

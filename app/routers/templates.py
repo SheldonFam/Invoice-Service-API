@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_current_user, get_db
@@ -9,19 +9,29 @@ from app.schemas.invoice import (
     InvoiceTemplateCreate,
     InvoiceTemplateResponse,
     InvoiceTemplateUpdate,
+    PaginatedResponse,
 )
 from app.services import template_service
 
 router = APIRouter(prefix="/templates", tags=["templates"])
 
 
-@router.get("", response_model=list[InvoiceTemplateResponse])
+@router.get("", response_model=PaginatedResponse[InvoiceTemplateResponse])
 async def list_templates(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    templates = await template_service.list_templates(db, current_user.id)
-    return [InvoiceTemplateResponse.from_orm_model(t) for t in templates]
+    templates, total = await template_service.list_templates(
+        db, current_user.id, limit, offset
+    )
+    return PaginatedResponse(
+        items=[InvoiceTemplateResponse.from_orm_model(t) for t in templates],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("", response_model=InvoiceTemplateResponse, status_code=status.HTTP_201_CREATED)

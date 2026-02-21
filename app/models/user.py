@@ -1,9 +1,9 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import DateTime, String
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -11,11 +11,20 @@ from app.database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    email = Column(String, unique=True, nullable=False, index=True)
-    name = Column(String, nullable=False)
-    password = Column(String, nullable=False)  # bcrypt hash
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    password: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
 
-    invoices = relationship("Invoice", back_populates="owner", cascade="all, delete")
-    templates = relationship("InvoiceTemplate", back_populates="owner", cascade="all, delete")
+    invoices: Mapped[list["Invoice"]] = relationship(
+        back_populates="owner", cascade="all, delete"
+    )
+    templates: Mapped[list["InvoiceTemplate"]] = relationship(
+        back_populates="owner", cascade="all, delete"
+    )

@@ -1,9 +1,11 @@
 from datetime import date
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Generic, List, Literal, Optional, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
+T = TypeVar("T")
 
 
 class AddressSchema(BaseModel):
@@ -11,6 +13,16 @@ class AddressSchema(BaseModel):
     city: str
     post_code: str
     country: str
+
+    @classmethod
+    def from_flat(cls, prefix: str, obj: object) -> "AddressSchema":
+        """Build from flat ORM fields like sender_street, sender_city, etc."""
+        return cls(
+            street=getattr(obj, f"{prefix}_street", "") or "",
+            city=getattr(obj, f"{prefix}_city", "") or "",
+            post_code=getattr(obj, f"{prefix}_post_code", "") or "",
+            country=getattr(obj, f"{prefix}_country", "") or "",
+        )
 
 
 class InvoiceItemInput(BaseModel):
@@ -75,10 +87,6 @@ class InvoiceResponse(BaseModel):
     @classmethod
     def from_orm_model(cls, invoice) -> "InvoiceResponse":
         today = date.today()
-        is_overdue = (
-            invoice.status != "paid"
-            and invoice.payment_due < today
-        )
         return cls(
             id=invoice.id,
             created_at=invoice.created_at,
@@ -88,33 +96,17 @@ class InvoiceResponse(BaseModel):
             client_name=invoice.client_name,
             client_email=invoice.client_email,
             status=invoice.status,
-            sender_address=AddressSchema(
-                street=invoice.sender_street or "",
-                city=invoice.sender_city or "",
-                post_code=invoice.sender_post_code or "",
-                country=invoice.sender_country or "",
-            ),
-            client_address=AddressSchema(
-                street=invoice.client_street or "",
-                city=invoice.client_city or "",
-                post_code=invoice.client_post_code or "",
-                country=invoice.client_country or "",
-            ),
+            sender_address=AddressSchema.from_flat("sender", invoice),
+            client_address=AddressSchema.from_flat("client", invoice),
             items=[
-                InvoiceItemResponse(
-                    id=item.id,
-                    name=item.name,
-                    quantity=item.quantity,
-                    price=item.price,
-                    total=item.total,
-                )
+                InvoiceItemResponse.model_validate(item, from_attributes=True)
                 for item in invoice.items
             ],
             subtotal=invoice.subtotal,
             tax_rate=invoice.tax_rate,
             tax_amount=invoice.tax_amount,
             total=invoice.total,
-            is_overdue=is_overdue,
+            is_overdue=invoice.status != "paid" and invoice.payment_due < today,
         )
 
 
@@ -126,6 +118,15 @@ class InvoiceStatistics(BaseModel):
     paid_this_month: Decimal
     overdue_count: int
     total_invoices: int
+
+
+# --- Pagination ---
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]
+    total: int
+    limit: int
+    offset: int
 
 
 # --- Invoice Templates ---
@@ -175,14 +176,11 @@ class InvoiceTemplateResponse(BaseModel):
 
     @classmethod
     def from_orm_model(cls, template) -> "InvoiceTemplateResponse":
-        sender_address = None
-        if template.sender_street:
-            sender_address = AddressSchema(
-                street=template.sender_street or "",
-                city=template.sender_city or "",
-                post_code=template.sender_post_code or "",
-                country=template.sender_country or "",
-            )
+        sender_address = (
+            AddressSchema.from_flat("sender", template)
+            if template.sender_street
+            else None
+        )
         return cls(
             id=template.id,
             name=template.name,
@@ -190,12 +188,7 @@ class InvoiceTemplateResponse(BaseModel):
             payment_terms=template.payment_terms,
             sender_address=sender_address,
             items=[
-                TemplateItemResponse(
-                    id=item.id,
-                    name=item.name,
-                    quantity=item.quantity,
-                    price=item.price,
-                )
+                TemplateItemResponse.model_validate(item, from_attributes=True)
                 for item in template.items
             ],
             tax_rate=template.tax_rate,
