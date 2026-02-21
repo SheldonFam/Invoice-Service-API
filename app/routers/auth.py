@@ -2,9 +2,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import jwt
-from passlib.context import CryptContext
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
@@ -17,8 +17,15 @@ from app.schemas.user import RefreshRequest, Token, UserCreate, UserLogin, UserR
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 limiter = Limiter(key_func=get_remote_address)
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -41,7 +48,7 @@ async def register(request: Request, data: UserCreate, db: AsyncSession = Depend
     user = User(
         email=data.email,
         name=data.name,
-        password=pwd_context.hash(data.password),
+        password=hash_password(data.password),
     )
     db.add(user)
     await db.commit()
@@ -54,7 +61,7 @@ async def register(request: Request, data: UserCreate, db: AsyncSession = Depend
 async def login(request: Request, data: UserLogin, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
-    if user is None or not pwd_context.verify(data.password, user.password):
+    if user is None or not verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     access_token = create_access_token({"sub": str(user.id), "type": "access"})
